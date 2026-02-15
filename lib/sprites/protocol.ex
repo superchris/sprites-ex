@@ -40,7 +40,7 @@ defmodule Sprites.Protocol do
   @spec decode(binary()) :: decoded()
   def decode(<<@stdout_id, payload::binary>>), do: {:stdout, payload}
   def decode(<<@stderr_id, payload::binary>>), do: {:stderr, payload}
-  def decode(<<@exit_id, code::big-unsigned-32>>), do: {:exit, code}
+  def decode(<<@exit_id, code::8>>), do: {:exit, code}
   def decode(<<@stdin_eof_id>>), do: {:stdin_eof, nil}
   def decode(data), do: {:unknown, data}
 
