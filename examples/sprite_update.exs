@@ -7,6 +7,6 @@ sprite_name = System.get_env("SPRITE_NAME")
 client = Sprites.new(token)
 sprite = Sprites.sprite(client, sprite_name)
 
-:ok = Sprites.update_url_settings(sprite, %{auth: "public"})
+:ok = Sprites.update(sprite, url_settings: %{auth: "public"}, labels: ["prod"])
 
-IO.puts("URL settings updated")
+IO.puts("Sprite updated")

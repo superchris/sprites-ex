@@ -459,6 +459,26 @@ defmodule Sprites do
   end
 
   @doc """
+  Updates sprite settings (URL auth, labels, etc.).
+
+  ## Options
+
+    * `:url_settings` - URL settings map (e.g., `%{auth: "public"}`)
+    * `:labels` - List of label strings to apply
+    * `:clear_labels` - If true, clears existing labels before applying new ones
+
+  ## Examples
+
+      :ok = Sprites.update(sprite, labels: ["prod"])
+      :ok = Sprites.update(sprite, url_settings: %{auth: "public"}, labels: ["prod"])
+      :ok = Sprites.update(sprite, clear_labels: true, labels: ["staging"])
+  """
+  @spec update(sprite(), keyword()) :: :ok | {:error, term()}
+  def update(%Sprite{client: client, name: name}, opts \\ []) do
+    Client.update_sprite(client, name, opts)
+  end
+
+  @doc """
   Lists all sprites.
 
   ## Options

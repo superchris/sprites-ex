@@ -55,6 +55,7 @@ defmodule Sprites.Client do
   def create_sprite(client, name, opts \\ []) do
     body = %{name: name}
     body = if config = Keyword.get(opts, :config), do: Map.put(body, :config, config), else: body
+    body = if labels = Keyword.get(opts, :labels), do: Map.put(body, :labels, labels), else: body
 
     case Req.post(client.req, url: "/v1/sprites", json: body, receive_timeout: @create_timeout) do
       {:ok, %{status: status, body: body}} when status in 200..299 ->
@@ -163,6 +164,34 @@ defmodule Sprites.Client do
   @spec update_url_settings(t(), String.t(), map()) :: :ok | {:error, term()}
   def update_url_settings(client, name, settings) do
     body = %{url_settings: settings}
+
+    case Req.put(client.req, url: "/v1/sprites/#{URI.encode(name)}", json: body) do
+      {:ok, %{status: status}} when status in 200..299 ->
+        :ok
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, {:api_error, status, body}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Updates sprite settings (URL auth, labels, etc.).
+
+  ## Options
+
+    * `:url_settings` - URL settings map (e.g., `%{auth: "public"}`)
+    * `:labels` - List of label strings to apply
+    * `:clear_labels` - If true, clears all existing labels before applying new ones
+  """
+  @spec update_sprite(t(), String.t(), keyword()) :: :ok | {:error, term()}
+  def update_sprite(client, name, opts \\ []) do
+    body = %{}
+    body = if url_settings = Keyword.get(opts, :url_settings), do: Map.put(body, :url_settings, url_settings), else: body
+    body = if labels = Keyword.get(opts, :labels), do: Map.put(body, :labels, labels), else: body
+    body = if Keyword.get(opts, :clear_labels, false), do: Map.put(body, :clear_labels, true), else: body
 
     case Req.put(client.req, url: "/v1/sprites/#{URI.encode(name)}", json: body) do
       {:ok, %{status: status}} when status in 200..299 ->

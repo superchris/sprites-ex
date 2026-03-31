@@ -6,6 +6,6 @@ sprite_name = System.get_env("SPRITE_NAME")
 
 client = Sprites.new(token)
 
-{:ok, _sprite} = Sprites.create(client, sprite_name)
+{:ok, _sprite} = Sprites.create(client, sprite_name, labels: ["prod"])
 
 IO.puts("Sprite '#{sprite_name}' created")

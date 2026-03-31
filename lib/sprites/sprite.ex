@@ -3,7 +3,7 @@ defmodule Sprites.Sprite do
   Represents a sprite instance.
   """
 
-  defstruct [:name, :client, :id, :status, :config, :environment]
+  defstruct [:name, :client, :id, :status, :config, :environment, :labels]
 
   @type t :: %__MODULE__{
           name: String.t(),
@@ -11,7 +11,8 @@ defmodule Sprites.Sprite do
           id: String.t() | nil,
           status: String.t() | nil,
           config: map() | nil,
-          environment: map() | nil
+          environment: map() | nil,
+          labels: [String.t()] | nil
         }
 
   @doc """
@@ -25,7 +26,8 @@ defmodule Sprites.Sprite do
       id: Map.get(attrs, "id"),
       status: Map.get(attrs, "status"),
       config: Map.get(attrs, "config"),
-      environment: Map.get(attrs, "environment")
+      environment: Map.get(attrs, "environment"),
+      labels: Map.get(attrs, "labels")
     }
   end
 
