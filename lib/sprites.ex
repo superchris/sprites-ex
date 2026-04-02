@@ -357,6 +357,18 @@ defmodule Sprites do
     Command.start(sprite, "", [], opts)
   end
 
+  @doc """
+  Kills/terminates an active session.
+
+  ## Examples
+
+      :ok = Sprites.kill_session(sprite, "session-id")
+  """
+  @spec kill_session(sprite(), String.t()) :: :ok | {:error, term()}
+  def kill_session(sprite, session_id) do
+    Sprites.Session.kill(sprite, session_id)
+  end
+
   # ============================================================================
   # Port Forwarding API
   # ============================================================================

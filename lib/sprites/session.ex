@@ -109,6 +109,27 @@ defmodule Sprites.Session do
   end
 
   @doc """
+  Kills/terminates an active session.
+
+  ## Examples
+
+      :ok = Sprites.Session.kill(sprite, "session-id")
+  """
+  @spec kill(Sprite.t(), String.t()) :: :ok | {:error, term()}
+  def kill(%Sprite{client: client, name: name}, session_id) do
+    case Req.post(client.req, url: "/v1/sprites/#{URI.encode(name)}/exec/#{URI.encode(session_id)}/kill") do
+      {:ok, %{status: status}} when status in 200..299 ->
+        :ok
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, {:api_error, status, body}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
   Returns true if the session has recent activity (within 5 minutes).
   """
   @spec is_session_active?(t()) :: boolean()
