@@ -354,8 +354,6 @@ defmodule Sprites do
   @spec attach_session(sprite(), String.t(), keyword()) :: {:ok, command()} | {:error, term()}
   def attach_session(sprite, session_id, opts \\ []) do
     opts = Keyword.put(opts, :session_id, session_id)
-    # When attaching to a session, we spawn with empty command
-    # The session_id will be sent as a query param
     Command.start(sprite, "", [], opts)
   end
 

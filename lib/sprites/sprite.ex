@@ -46,10 +46,17 @@ defmodule Sprites.Sprite do
       client.base_url
       |> String.replace(~r/^http/, "ws")
 
-    path = "/v1/sprites/#{URI.encode(name)}/exec"
-    query_params = build_query_params(command, args, opts)
+    case Keyword.get(opts, :session_id) do
+      nil ->
+        path = "/v1/sprites/#{URI.encode(name)}/exec"
+        query_params = build_query_params(command, args, opts)
+        "#{base}#{path}?#{URI.encode_query(query_params)}"
 
-    "#{base}#{path}?#{URI.encode_query(query_params)}"
+      session_id ->
+        path = "/v1/sprites/#{URI.encode(name)}/exec/#{URI.encode(session_id)}"
+        query_params = build_attach_params(opts)
+        "#{base}#{path}?#{URI.encode_query(query_params)}"
+    end
   end
 
   @doc """
@@ -68,6 +75,12 @@ defmodule Sprites.Sprite do
     |> add_tty_params(opts)
     |> add_detachable_param(opts)
     |> add_session_id_param(opts)
+  end
+
+  defp build_attach_params(opts) do
+    []
+    |> add_stdin_param(opts)
+    |> add_tty_params(opts)
   end
 
   defp add_stdin_param(params, opts) do
