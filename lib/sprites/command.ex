@@ -169,7 +169,7 @@ defmodule Sprites.Command do
 
     case :gun.open(host, port, gun_opts) do
       {:ok, conn} ->
-        case :gun.await_up(conn, 10_000) do
+        case :gun.await_up(conn, 30_000) do
           {:ok, _protocol} ->
             path = "#{uri.path}?#{uri.query || ""}"
             headers = [{"authorization", "Bearer #{token}"}]
@@ -201,7 +201,7 @@ defmodule Sprites.Command do
                 :gun.close(conn)
                 {:error, reason}
             after
-              10_000 ->
+              30_000 ->
                 :gun.close(conn)
                 {:error, :upgrade_timeout}
             end

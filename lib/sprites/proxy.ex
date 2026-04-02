@@ -160,7 +160,7 @@ defmodule Sprites.Proxy do
 
       case :gun.open(host, port, opts) do
         {:ok, conn} ->
-          case :gun.await_up(conn, 10_000) do
+          case :gun.await_up(conn, 30_000) do
             {:ok, _protocol} ->
               headers = [
                 {"authorization", "Bearer #{state.client.token}"},
