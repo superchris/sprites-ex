@@ -204,7 +204,7 @@ defmodule Sprites.Proxy do
                       :gun.close(conn)
                       {:error, :connection_closed}
                   after
-                    10_000 ->
+                    30_000 ->
                       :gen_tcp.close(local_socket)
                       :gun.close(conn)
                       {:error, :timeout}
@@ -220,7 +220,7 @@ defmodule Sprites.Proxy do
                   :gun.close(conn)
                   {:error, reason}
               after
-                10_000 ->
+                30_000 ->
                   :gen_tcp.close(local_socket)
                   :gun.close(conn)
                   {:error, :upgrade_timeout}
