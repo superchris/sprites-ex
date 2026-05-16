@@ -111,6 +111,8 @@ defmodule Sprites do
     * `:tty` - Allocate a TTY (default: false)
     * `:tty_rows` - TTY rows (default: 24)
     * `:tty_cols` - TTY columns (default: 80)
+    * `:upgrade_timeout` - WebSocket upgrade timeout in milliseconds
+      (default: `Application.get_env(:sprites, :upgrade_timeout, 10_000)`)
 
   ## Examples
 
@@ -141,6 +143,8 @@ defmodule Sprites do
     * `:tty` - Allocate a TTY (default: false)
     * `:tty_rows` - TTY rows (default: 24)
     * `:tty_cols` - TTY columns (default: 80)
+    * `:upgrade_timeout` - WebSocket upgrade timeout in milliseconds
+      (default: `Application.get_env(:sprites, :upgrade_timeout, 10_000)`)
 
   ## Examples
 
@@ -367,6 +371,46 @@ defmodule Sprites do
   @spec kill_session(sprite(), String.t()) :: :ok | {:error, term()}
   def kill_session(sprite, session_id) do
     Sprites.Session.kill(sprite, session_id)
+  end
+
+  # ============================================================================
+  # Service API
+  # ============================================================================
+
+  @doc """
+  Lists all services for a sprite.
+
+  ## Examples
+
+      {:ok, services} = Sprites.list_services(sprite)
+  """
+  @spec list_services(sprite()) :: {:ok, [Sprites.Service.t()]} | {:error, term()}
+  def list_services(sprite) do
+    Sprites.Service.list(sprite)
+  end
+
+  @doc """
+  Starts a service on a sprite.
+
+  ## Examples
+
+      :ok = Sprites.start_service(sprite, "web")
+  """
+  @spec start_service(sprite(), String.t()) :: :ok | {:error, term()}
+  def start_service(sprite, service_name) do
+    Sprites.Service.start(sprite, service_name)
+  end
+
+  @doc """
+  Stops a service on a sprite.
+
+  ## Examples
+
+      :ok = Sprites.stop_service(sprite, "web")
+  """
+  @spec stop_service(sprite(), String.t()) :: :ok | {:error, term()}
+  def stop_service(sprite, service_name) do
+    Sprites.Service.stop(sprite, service_name)
   end
 
   # ============================================================================

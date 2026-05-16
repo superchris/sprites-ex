@@ -16,6 +16,8 @@ defmodule Sprites.Command do
 
   alias Sprites.{Sprite, Protocol, Error}
 
+  @default_upgrade_timeout 10_000
+
   defstruct [:ref, :pid, :sprite, :owner, :tty_mode]
 
   @type t :: %__MODULE__{
@@ -30,6 +32,11 @@ defmodule Sprites.Command do
 
   @doc """
   Starts a command asynchronously.
+
+  ## Options
+
+    * `:upgrade_timeout` - WebSocket upgrade timeout in milliseconds.
+      Defaults to `Application.get_env(:sprites, :upgrade_timeout, 10_000)`.
   """
   @spec start(Sprite.t(), String.t(), [String.t()], keyword()) :: {:ok, t()} | {:error, term()}
   def start(sprite, command, args, opts \\ []) do
@@ -125,6 +132,7 @@ defmodule Sprites.Command do
     url = Sprite.exec_url(sprite, command, args, opts)
     tty_mode = Keyword.get(opts, :tty, false)
     token = Sprite.token(sprite)
+    upgrade_timeout = upgrade_timeout(opts)
 
     state = %{
       owner: owner,
@@ -138,7 +146,7 @@ defmodule Sprites.Command do
     }
 
     # Connect asynchronously but wait for connection in init
-    case do_connect(url, token) do
+    case do_connect(url, token, upgrade_timeout) do
       {:ok, conn, stream_ref} ->
         {:ok, %{state | conn: conn, stream_ref: stream_ref}}
 
@@ -147,7 +155,14 @@ defmodule Sprites.Command do
     end
   end
 
-  defp do_connect(url, token) do
+  @doc false
+  def upgrade_timeout(opts) do
+    Keyword.get_lazy(opts, :upgrade_timeout, fn ->
+      Application.get_env(:sprites, :upgrade_timeout, @default_upgrade_timeout)
+    end)
+  end
+
+  defp do_connect(url, token, upgrade_timeout) do
     uri = URI.parse(url)
     host = String.to_charlist(uri.host)
     port = uri.port || if(uri.scheme == "wss", do: 443, else: 80)
@@ -169,7 +184,7 @@ defmodule Sprites.Command do
 
     case :gun.open(host, port, gun_opts) do
       {:ok, conn} ->
-        case :gun.await_up(conn, 10_000) do
+        case :gun.await_up(conn, upgrade_timeout) do
           {:ok, _protocol} ->
             path = "#{uri.path}?#{uri.query || ""}"
             headers = [{"authorization", "Bearer #{token}"}]
@@ -201,7 +216,7 @@ defmodule Sprites.Command do
                 :gun.close(conn)
                 {:error, reason}
             after
-              10_000 ->
+              upgrade_timeout ->
                 :gun.close(conn)
                 {:error, :upgrade_timeout}
             end
