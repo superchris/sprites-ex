@@ -118,6 +118,23 @@ defmodule Sprites.Command do
   end
 
   @doc """
+  Waits for the server to identify the exec session backing this command.
+
+  Returns `{:ok, session_id}` after the command's `session_info` message is
+  received, or `{:error, :timeout}` if the server does not identify the session
+  within `timeout`.
+  """
+  @spec await_session_id(t(), timeout()) :: {:ok, String.t()} | {:error, term()}
+  def await_session_id(%__MODULE__{pid: pid}, timeout \\ 10_000) do
+    GenServer.call(pid, :await_session_id, timeout)
+  catch
+    :exit, {:timeout, _call} -> {:error, :timeout}
+    :exit, {:noproc, _call} -> {:error, :command_exited}
+    :exit, {:normal, _call} -> {:error, :command_exited}
+    :exit, _reason -> {:error, :command_exited}
+  end
+
+  @doc """
   Resizes the TTY.
   """
   @spec resize(t(), pos_integer(), pos_integer()) :: :ok
@@ -141,6 +158,8 @@ defmodule Sprites.Command do
       conn: nil,
       stream_ref: nil,
       exit_code: nil,
+      session_id: nil,
+      session_id_waiters: [],
       token: token,
       url: url
     }
@@ -282,6 +301,15 @@ defmodule Sprites.Command do
     {:reply, {:error, :not_connected}, state}
   end
 
+  def handle_call(:await_session_id, _from, %{session_id: session_id} = state)
+      when is_binary(session_id) do
+    {:reply, {:ok, session_id}, state}
+  end
+
+  def handle_call(:await_session_id, from, state) do
+    {:noreply, %{state | session_id_waiters: [from | state.session_id_waiters]}}
+  end
+
   @impl true
   def handle_cast(:close_stdin, %{conn: conn, stream_ref: stream_ref, tty_mode: false} = state)
       when conn != nil do
@@ -348,6 +376,11 @@ defmodule Sprites.Command do
 
   defp handle_text_frame(json, %{owner: owner, ref: ref} = state) do
     case Jason.decode(json) do
+      {:ok, %{"type" => "session_info", "session_id" => session_id}}
+      when is_binary(session_id) ->
+        Enum.each(state.session_id_waiters, &GenServer.reply(&1, {:ok, session_id}))
+        {:noreply, %{state | session_id: session_id, session_id_waiters: []}}
+
       {:ok, %{"type" => "port", "port" => port}} ->
         send(owner, {:port, %{ref: ref}, port})
         {:noreply, state}

@@ -201,6 +201,21 @@ defmodule Sprites do
   end
 
   @doc """
+  Waits for the Sprites exec API to return the session ID for a running command.
+
+  The returned ID can be passed to `attach_session/3` or `kill_session/2`.
+
+  ## Examples
+
+      {:ok, command} = Sprites.spawn(sprite, "bash", ["-i"], tty: true)
+      {:ok, session_id} = Sprites.await_session_id(command)
+  """
+  @spec await_session_id(command(), timeout()) :: {:ok, String.t()} | {:error, term()}
+  def await_session_id(command, timeout \\ 10_000) do
+    Command.await_session_id(command, timeout)
+  end
+
+  @doc """
   Resizes the TTY of a running command.
 
   Only works if the command was started with `tty: true`.

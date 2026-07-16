@@ -31,6 +31,42 @@ defmodule Sprites.CommandTest do
     end
   end
 
+  describe "await_session_id/2" do
+    test "replies to waiting callers when session_info arrives" do
+      reply_ref = make_ref()
+
+      state = %{
+        conn: :conn,
+        owner: self(),
+        ref: make_ref(),
+        session_id: nil,
+        session_id_waiters: [{self(), reply_ref}]
+      }
+
+      json =
+        Jason.encode!(%{
+          type: "session_info",
+          session_id: "1847",
+          command: "bash",
+          is_owner: true
+        })
+
+      assert {:noreply, updated} =
+               Command.handle_info({:gun_ws, :conn, :stream, {:text, json}}, state)
+
+      assert_receive {^reply_ref, {:ok, "1847"}}
+      assert updated.session_id == "1847"
+      assert updated.session_id_waiters == []
+    end
+
+    test "returns a session ID that has already arrived" do
+      state = %{session_id: "1847", session_id_waiters: []}
+
+      assert {:reply, {:ok, "1847"}, ^state} =
+               Command.handle_call(:await_session_id, {self(), make_ref()}, state)
+    end
+  end
+
   defp restore(key, nil), do: Application.delete_env(:sprites, key)
   defp restore(key, value), do: Application.put_env(:sprites, key, value)
 end
