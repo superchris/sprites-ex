@@ -56,6 +56,7 @@ defmodule Sprites.Client do
     body = %{name: name}
     body = if config = Keyword.get(opts, :config), do: Map.put(body, :config, config), else: body
     body = if url = Keyword.get(opts, :callback_url), do: Map.put(body, :callback_url, url), else: body
+    body = if secret = Keyword.get(opts, :webhook_secret), do: Map.put(body, :webhook_secret, secret), else: body
 
     case Req.post(client.req, url: "/v1/sprites", json: body, receive_timeout: @create_timeout) do
       {:ok, %{status: status, body: body}} when status in 200..299 ->
