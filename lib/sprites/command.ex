@@ -171,6 +171,8 @@ defmodule Sprites.Command do
       cols: cols
     }
 
+    Process.monitor(owner)
+
     # Connect asynchronously but wait for connection in init
     case do_connect(url, token, upgrade_timeout) do
       {:ok, conn, stream_ref} ->
@@ -290,6 +292,10 @@ defmodule Sprites.Command do
 
   def handle_info({:gun_error, conn, reason}, %{conn: conn} = state) do
     send(state.owner, {:error, %{ref: state.ref}, reason})
+    {:stop, :normal, state}
+  end
+
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, %{owner: pid} = state) do
     {:stop, :normal, state}
   end
 
