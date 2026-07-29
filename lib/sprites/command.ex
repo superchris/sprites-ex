@@ -17,7 +17,7 @@ defmodule Sprites.Command do
   alias Sprites.{Sprite, Protocol, Error}
 
   @default_upgrade_timeout 10_000
-  @default_ws_keepalive 30_000
+  @default_ws_keepalive 20_000
 
   defstruct [:ref, :pid, :sprite, :owner, :tty_mode]
 
@@ -152,6 +152,9 @@ defmodule Sprites.Command do
     token = Sprite.token(sprite)
     upgrade_timeout = upgrade_timeout(opts)
 
+    rows = Keyword.get(opts, :tty_rows, 24)
+    cols = Keyword.get(opts, :tty_cols, 80)
+
     state = %{
       owner: owner,
       ref: ref,
@@ -162,13 +165,17 @@ defmodule Sprites.Command do
       session_id: nil,
       session_id_waiters: [],
       token: token,
-      url: url
+      url: url,
+      keepalive_ref: nil,
+      rows: rows,
+      cols: cols
     }
 
     # Connect asynchronously but wait for connection in init
     case do_connect(url, token, upgrade_timeout) do
       {:ok, conn, stream_ref} ->
-        {:ok, %{state | conn: conn, stream_ref: stream_ref}}
+        state = %{state | conn: conn, stream_ref: stream_ref}
+        {:ok, schedule_keepalive(state)}
 
       {:error, reason} ->
         {:stop, reason}
@@ -212,8 +219,7 @@ defmodule Sprites.Command do
           {:ok, _protocol} ->
             path = "#{uri.path}?#{uri.query || ""}"
             headers = [{"authorization", "Bearer #{token}"}]
-            ws_opts = %{keepalive: ws_keepalive()}
-            stream_ref = :gun.ws_upgrade(conn, path, headers, ws_opts)
+            stream_ref = :gun.ws_upgrade(conn, path, headers)
 
             # Wait for WebSocket upgrade
             receive do
@@ -287,6 +293,23 @@ defmodule Sprites.Command do
     {:stop, :normal, state}
   end
 
+  def handle_info(:keepalive, %{conn: conn, stream_ref: stream_ref, tty_mode: true} = state)
+      when conn != nil do
+    message = Jason.encode!(%{type: "resize", rows: state.rows, cols: state.cols})
+    :gun.ws_send(conn, stream_ref, {:text, message})
+    {:noreply, schedule_keepalive(state)}
+  end
+
+  def handle_info(:keepalive, %{conn: conn, stream_ref: stream_ref, tty_mode: false} = state)
+      when conn != nil do
+    :gun.ws_send(conn, stream_ref, {:text, "{}"})
+    {:noreply, schedule_keepalive(state)}
+  end
+
+  def handle_info(:keepalive, state) do
+    {:noreply, state}
+  end
+
   def handle_info(_message, state) do
     {:noreply, state}
   end
@@ -333,7 +356,7 @@ defmodule Sprites.Command do
       when conn != nil do
     message = Jason.encode!(%{type: "resize", rows: rows, cols: cols})
     :gun.ws_send(conn, stream_ref, {:text, message})
-    {:noreply, state}
+    {:noreply, %{state | rows: rows, cols: cols}}
   end
 
   def handle_cast({:resize, _, _}, state), do: {:noreply, state}
@@ -347,6 +370,12 @@ defmodule Sprites.Command do
   def terminate(_reason, _state), do: :ok
 
   # Private helpers
+
+  defp schedule_keepalive(state) do
+    if state.keepalive_ref, do: Process.cancel_timer(state.keepalive_ref)
+    ref = Process.send_after(self(), :keepalive, ws_keepalive())
+    %{state | keepalive_ref: ref}
+  end
 
   defp handle_binary_frame(data, %{tty_mode: true, owner: owner, ref: ref} = state) do
     send(owner, {:stdout, %{ref: ref}, data})

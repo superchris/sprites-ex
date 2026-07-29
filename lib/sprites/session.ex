@@ -117,7 +117,9 @@ defmodule Sprites.Session do
   """
   @spec kill(Sprite.t(), String.t()) :: :ok | {:error, term()}
   def kill(%Sprite{client: client, name: name}, session_id) do
-    case Req.post(client.req, url: "/v1/sprites/#{URI.encode(name)}/exec/#{URI.encode(session_id)}/kill") do
+    case Req.post(client.req,
+           url: "/v1/sprites/#{URI.encode(name)}/exec/#{URI.encode(session_id)}/kill"
+         ) do
       {:ok, %{status: status}} when status in 200..299 ->
         :ok
 
