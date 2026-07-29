@@ -17,6 +17,7 @@ defmodule Sprites.Command do
   alias Sprites.{Sprite, Protocol, Error}
 
   @default_upgrade_timeout 10_000
+  @default_ws_keepalive 30_000
 
   defstruct [:ref, :pid, :sprite, :owner, :tty_mode]
 
@@ -181,6 +182,10 @@ defmodule Sprites.Command do
     end)
   end
 
+  defp ws_keepalive do
+    Application.get_env(:sprites, :ws_keepalive, @default_ws_keepalive)
+  end
+
   defp do_connect(url, token, upgrade_timeout) do
     uri = URI.parse(url)
     host = String.to_charlist(uri.host)
@@ -207,7 +212,8 @@ defmodule Sprites.Command do
           {:ok, _protocol} ->
             path = "#{uri.path}?#{uri.query || ""}"
             headers = [{"authorization", "Bearer #{token}"}]
-            stream_ref = :gun.ws_upgrade(conn, path, headers)
+            ws_opts = %{keepalive: ws_keepalive()}
+            stream_ref = :gun.ws_upgrade(conn, path, headers, ws_opts)
 
             # Wait for WebSocket upgrade
             receive do
