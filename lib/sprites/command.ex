@@ -9,12 +9,17 @@ defmodule Sprites.Command do
     * `{:stderr, command, data}` - stderr data received
     * `{:exit, command, exit_code}` - command completed
     * `{:error, command, reason}` - error occurred
+
+  Supports two execution modes:
+
+    * **Direct mode** (default) — opens a new WebSocket per command to `/exec`
+    * **Control mode** — multiplexes over a persistent WebSocket to `/control`
   """
 
   use GenServer
   require Logger
 
-  alias Sprites.{Sprite, Protocol, Error}
+  alias Sprites.{Sprite, Protocol, Error, Control, ControlConn}
 
   @default_upgrade_timeout 10_000
 
@@ -146,12 +151,12 @@ defmodule Sprites.Command do
 
   @impl true
   def init(%{sprite: sprite, command: command, args: args, opts: opts, owner: owner, ref: ref}) do
-    url = Sprite.exec_url(sprite, command, args, opts)
     tty_mode = Keyword.get(opts, :tty, false)
     token = Sprite.token(sprite)
     upgrade_timeout = upgrade_timeout(opts)
+    stdin = Keyword.get(opts, :stdin, false)
 
-    state = %{
+    base_state = %{
       owner: owner,
       ref: ref,
       tty_mode: tty_mode,
@@ -161,10 +166,86 @@ defmodule Sprites.Command do
       session_id: nil,
       session_id_waiters: [],
       token: token,
-      url: url
+      sprite: sprite,
+      using_control: false,
+      control_conn: nil
     }
 
-    # Connect asynchronously but wait for connection in init
+    if Sprite.control_mode?(sprite) and Control.control_supported?(sprite) do
+      case try_control_connect(sprite, command, args, opts, stdin, base_state) do
+        {:ok, state} ->
+          {:ok, state}
+
+        {:fallback, _reason} ->
+          do_direct_init(sprite, command, args, opts, token, upgrade_timeout, base_state)
+      end
+    else
+      do_direct_init(sprite, command, args, opts, token, upgrade_timeout, base_state)
+    end
+  end
+
+  defp try_control_connect(sprite, command, args, opts, stdin, state) do
+    case Control.checkout(sprite) do
+      {:ok, conn_pid} ->
+        op_args = build_control_args(command, args, opts, stdin)
+
+        case ControlConn.start_op(conn_pid, self(), "exec", op_args) do
+          :ok ->
+            {:ok, %{state | using_control: true, control_conn: conn_pid}}
+
+          {:error, reason} ->
+            Control.checkin(sprite, conn_pid)
+            {:fallback, reason}
+        end
+
+      {:error, {:control_not_supported, _}} ->
+        Control.mark_unsupported(sprite)
+        {:fallback, :control_not_supported}
+
+      {:error, reason} ->
+        {:fallback, reason}
+    end
+  end
+
+  defp build_control_args(command, args, opts, stdin) do
+    control_args = %{"cmd" => [command | args]}
+
+    control_args =
+      case Keyword.get(opts, :dir) do
+        nil -> control_args
+        dir -> Map.put(control_args, "dir", dir)
+      end
+
+    control_args =
+      case Keyword.get(opts, :env, []) do
+        [] ->
+          control_args
+
+        env_list ->
+          env_strs = Enum.map(env_list, fn {k, v} -> "#{k}=#{v}" end)
+          Map.put(control_args, "env", env_strs)
+      end
+
+    control_args =
+      if Keyword.get(opts, :tty, false) do
+        rows = Keyword.get(opts, :tty_rows, 24)
+        cols = Keyword.get(opts, :tty_cols, 80)
+
+        control_args
+        |> Map.put("tty", "true")
+        |> Map.put("rows", to_string(rows))
+        |> Map.put("cols", to_string(cols))
+      else
+        control_args
+      end
+
+    Map.put(control_args, "stdin", if(stdin, do: "true", else: "false"))
+  end
+
+  defp do_direct_init(sprite, command, args, opts, token, upgrade_timeout, state) do
+    url = Sprite.exec_url(sprite, command, args, opts)
+    state = Map.put(state, :url, url)
+
     case do_connect(url, token, upgrade_timeout) do
       {:ok, conn, stream_ref} ->
         {:ok, %{state | conn: conn, stream_ref: stream_ref}}
@@ -250,7 +331,50 @@ defmodule Sprites.Command do
     end
   end
 
+  # --- Control mode handle_info clauses ---
+
   @impl true
+  def handle_info(
+        {:control_data, :binary, data},
+        %{using_control: true} = state
+      ) do
+    handle_binary_frame(data, state)
+  end
+
+  def handle_info(
+        {:control_data, :text, text},
+        %{using_control: true} = state
+      ) do
+    handle_text_frame(text, state)
+  end
+
+  def handle_info(
+        {:control_op_complete, exit_code},
+        %{using_control: true, owner: owner, ref: ref, sprite: sprite, control_conn: conn_pid} =
+          state
+      ) do
+    # In control mode, op.complete is the authoritative signal.
+    # If we haven't already sent an exit message (from exit stream), send now.
+    if state.exit_code == nil do
+      send(owner, {:exit, %{ref: ref}, exit_code})
+    end
+
+    Control.checkin(sprite, conn_pid)
+    {:stop, :normal, %{state | exit_code: exit_code, control_conn: nil}}
+  end
+
+  def handle_info(
+        {:control_op_error, reason},
+        %{using_control: true, owner: owner, ref: ref, sprite: sprite, control_conn: conn_pid} =
+          state
+      ) do
+    send(owner, {:error, %{ref: ref}, reason})
+    Control.checkin(sprite, conn_pid)
+    {:stop, :normal, %{state | control_conn: nil}}
+  end
+
+  # --- Direct mode handle_info clauses ---
+
   def handle_info({:gun_ws, conn, _stream_ref, {:binary, data}}, %{conn: conn} = state) do
     handle_binary_frame(data, state)
   end
@@ -265,7 +389,15 @@ defmodule Sprites.Command do
 
   def handle_info({:gun_down, conn, _protocol, reason, _killed_streams}, %{conn: conn} = state) do
     if state.exit_code == nil do
-      send(state.owner, {:error, %{ref: state.ref}, reason})
+      # For normal closes (:closed, :normal), drain any pending WS frames
+      # from the mailbox before reporting an error. The exit frame may have
+      # been delivered but not yet processed.
+      state = drain_pending_frames(state)
+
+      if state.exit_code == nil do
+        # Still no exit code after draining — report as error
+        send(state.owner, {:error, %{ref: state.ref}, reason})
+      end
     end
 
     {:stop, :normal, state}
@@ -285,7 +417,20 @@ defmodule Sprites.Command do
     {:noreply, state}
   end
 
+  # --- Write stdin ---
+
   @impl true
+  def handle_call(
+        {:write_stdin, data},
+        _from,
+        %{using_control: true, control_conn: conn_pid, tty_mode: tty_mode} = state
+      )
+      when conn_pid != nil do
+    frame_data = Protocol.encode_stdin(data, tty_mode)
+    ControlConn.send_data(conn_pid, frame_data)
+    {:reply, :ok, state}
+  end
+
   def handle_call(
         {:write_stdin, data},
         _from,
@@ -310,7 +455,19 @@ defmodule Sprites.Command do
     {:noreply, %{state | session_id_waiters: [from | state.session_id_waiters]}}
   end
 
+  # --- Close stdin ---
+
   @impl true
+  def handle_cast(
+        :close_stdin,
+        %{using_control: true, control_conn: conn_pid, tty_mode: false} = state
+      )
+      when conn_pid != nil do
+    frame_data = Protocol.encode_stdin_eof()
+    ControlConn.send_data(conn_pid, frame_data)
+    {:noreply, state}
+  end
+
   def handle_cast(:close_stdin, %{conn: conn, stream_ref: stream_ref, tty_mode: false} = state)
       when conn != nil do
     frame_data = Protocol.encode_stdin_eof()
@@ -319,6 +476,18 @@ defmodule Sprites.Command do
   end
 
   def handle_cast(:close_stdin, state), do: {:noreply, state}
+
+  # --- Resize ---
+
+  def handle_cast(
+        {:resize, rows, cols},
+        %{using_control: true, control_conn: conn_pid, tty_mode: true} = state
+      )
+      when conn_pid != nil do
+    message = Jason.encode!(%{type: "resize", rows: rows, cols: cols})
+    ControlConn.send_text(conn_pid, message)
+    {:noreply, state}
+  end
 
   def handle_cast(
         {:resize, rows, cols},
@@ -332,7 +501,15 @@ defmodule Sprites.Command do
 
   def handle_cast({:resize, _, _}, state), do: {:noreply, state}
 
+  # --- Terminate ---
+
   @impl true
+  def terminate(_reason, %{using_control: true, control_conn: conn_pid, sprite: sprite})
+      when conn_pid != nil do
+    Control.checkin(sprite, conn_pid)
+    :ok
+  end
+
   def terminate(_reason, %{conn: conn}) when conn != nil do
     :gun.close(conn)
     :ok
@@ -358,13 +535,20 @@ defmodule Sprites.Command do
         {:noreply, state}
 
       {:exit, code} ->
-        send(owner, {:exit, %{ref: ref}, code})
-        # Send close frame and stop
-        if state.conn do
-          :gun.ws_send(state.conn, state.stream_ref, :close)
-        end
+        if state.using_control do
+          # In control mode, store exit code but DON'T stop.
+          # Wait for op.complete to ensure proper sequencing.
+          send(owner, {:exit, %{ref: ref}, code})
+          {:noreply, %{state | exit_code: code}}
+        else
+          send(owner, {:exit, %{ref: ref}, code})
 
-        {:stop, :normal, %{state | exit_code: code}}
+          if state.conn do
+            :gun.ws_send(state.conn, state.stream_ref, :close)
+          end
+
+          {:stop, :normal, %{state | exit_code: code}}
+        end
 
       {:stdin_eof, _} ->
         {:noreply, state}
@@ -386,13 +570,18 @@ defmodule Sprites.Command do
         {:noreply, state}
 
       {:ok, %{"type" => "exit", "code" => code}} ->
-        send(owner, {:exit, %{ref: ref}, code})
+        if state.using_control do
+          send(owner, {:exit, %{ref: ref}, code})
+          {:noreply, %{state | exit_code: code}}
+        else
+          send(owner, {:exit, %{ref: ref}, code})
 
-        if state.conn do
-          :gun.ws_send(state.conn, state.stream_ref, :close)
+          if state.conn do
+            :gun.ws_send(state.conn, state.stream_ref, :close)
+          end
+
+          {:stop, :normal, %{state | exit_code: code}}
         end
-
-        {:stop, :normal, %{state | exit_code: code}}
 
       _ ->
         {:noreply, state}
@@ -431,6 +620,27 @@ defmodule Sprites.Command do
         raise Sprites.Error.TimeoutError, timeout: timeout
     end
   end
+
+  # Drain any pending WebSocket frames from the mailbox.
+  # Called on gun_down to pick up exit frames that may have arrived
+  # but not yet been processed (race between data frames and connection close).
+  defp drain_pending_frames(%{conn: conn} = state) do
+    receive do
+      {:gun_ws, ^conn, _stream_ref, {:binary, data}} ->
+        {:noreply, state} = handle_binary_frame(data, state)
+        drain_pending_frames(state)
+
+      {:gun_ws, ^conn, _stream_ref, {:text, json}} ->
+        case handle_text_frame(json, state) do
+          {:noreply, state} -> drain_pending_frames(state)
+          {:stop, :normal, state} -> state
+        end
+    after
+      0 -> state
+    end
+  end
+
+  defp drain_pending_frames(state), do: state
 
   # Read the response body from a failed HTTP response
   defp read_response_body(_conn, _stream_ref, :fin), do: ""
