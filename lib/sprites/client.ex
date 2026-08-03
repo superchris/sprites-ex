@@ -50,19 +50,24 @@ defmodule Sprites.Client do
   ## Options
 
     * `:config` - Sprite configuration map
+    * `:callback_url` - URL for lifecycle webhook callbacks
+    * `:webhook_secret` - Secret used to sign lifecycle callbacks
+    * `:metadata` - Metadata passed to the sprite provisioner
+    * `:overlay_files` - Repository overlay files passed only in the create request
   """
   @spec create_sprite(t(), String.t(), keyword()) :: {:ok, Sprites.Sprite.t()} | {:error, term()}
   def create_sprite(client, name, opts \\ []) do
-    body = %{name: name}
-    body = if config = Keyword.get(opts, :config), do: Map.put(body, :config, config), else: body
-
     body =
-      if url = Keyword.get(opts, :callback_url), do: Map.put(body, :callback_url, url), else: body
-
-    body =
-      if secret = Keyword.get(opts, :webhook_secret),
-        do: Map.put(body, :webhook_secret, secret),
-        else: body
+      Enum.reduce(
+        [:config, :callback_url, :webhook_secret, :metadata, :overlay_files],
+        %{name: name},
+        fn key, body ->
+          case Keyword.fetch(opts, key) do
+            {:ok, value} -> Map.put(body, key, value)
+            :error -> body
+          end
+        end
+      )
 
     case Req.post(client.req, url: "/v1/sprites", json: body, receive_timeout: @create_timeout) do
       {:ok, %{status: status, body: body}} when status in 200..299 ->

@@ -74,6 +74,10 @@ defmodule Sprites do
   ## Options
 
     * `:config` - Sprite configuration map
+    * `:callback_url` - URL for lifecycle webhook callbacks
+    * `:webhook_secret` - Secret used to sign lifecycle callbacks
+    * `:metadata` - Metadata passed to the sprite provisioner
+    * `:overlay_files` - Repository overlay files passed only in the create request
 
   ## Examples
 

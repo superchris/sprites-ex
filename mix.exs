@@ -29,6 +29,7 @@ defmodule Sprites.MixProject do
       {:req, "~> 0.5"},
       {:gun, "~> 2.1"},
       {:jason, "~> 1.4"},
+      {:plug, "~> 1.15", only: :test},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ]
   end
